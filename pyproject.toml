@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vdsuit-smpl-receiver"
+version = "0.1.0"
+description = "Real-time VD Suit UDP motion capture to SMPL parameter converter"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+visualization = ["matplotlib>=3.7", "pyglet>=2.1,<2.2"]
+
+[project.scripts]
+vdsuit-smpl-receiver = "mocap_receiver.cli:main"
+vdsuit-smpl-viewer = "mocap_receiver.visualize:main"
+vdsuit-smpl-live-viewer = "mocap_receiver.live_visualize:main"
+vdsuit-coord-convert = "mocap_receiver.coordinate_converter:main"
+
+[tool.setuptools.packages.find]
+include = ["mocap_receiver*"]

@@ -1,0 +1,6 @@
+*.npz
+output/**
+.claude/**
+.pytest_cache/**
+**.egg-info/
+.venv/**
