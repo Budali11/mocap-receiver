@@ -103,9 +103,10 @@ vdsuit-smpl-receiver `
 
 `.npz` 使用常见的 AMASS 风格字段，可通过 `numpy.load()` 直接读取：
 
-- `poses`：`float32 (N, 72)`，每帧为 `global_orient(3) + body_pose(69)`。
-- `trans`：`float32 (N, 3)`，每帧的 pelvis 全局平移，单位为米。
-- `betas`：`float32 (10,)`，当前固定为中性平均体型的零向量。
+- `poses`：`float64 (N, 72)`，每帧为 `global_orient(3) + body_pose(69)`。
+- `trans`：`float64 (N, 3)`，每帧的 pelvis 全局平移，单位为米。
+- `frame_index`：`int64 (N,)`，发送端的原始帧号，用于和手部动作精确对齐。
+- `betas`：`float64 (10,)`，当前固定为中性平均体型的零向量。
 - `gender`：字符串标量 `neutral`。
 - `mocap_framerate`：浮点标量，默认为 `60.0`。
 
@@ -117,6 +118,7 @@ import numpy as np
 motion = np.load("motion.npz", allow_pickle=False)
 poses = motion["poses"]       # (N, 72)
 trans = motion["trans"]       # (N, 3)
+frame_index = motion["frame_index"]  # (N,)
 betas = motion["betas"]       # (10,)
 fps = motion["mocap_framerate"]
 ```
@@ -278,6 +280,179 @@ Matplotlib 的完整三角表面刷新速度明显低于顶点模式，因此实
 腿、颈、头、肩和手臂按名称映射。源 `Foot/Toe` 对应 SMPL `Ankle/Foot`，源 `Hand` 对应 SMPL `Wrist`；源数据没有独立的末端 Hand 旋转，因此 SMPL 的 `left_hand/right_hand` 使用单位局部旋转。
 
 源骨架的四段 Spine 会根据静态骨长，在脊柱总长度的 1/3、2/3 和末端处对全局四元数做 SLERP，从而得到 SMPL 的三段 Spine，并保留上躯干最终朝向。
+
+## 手部数据转 SMPL-X 并通过 UDP 转发
+
+`mocap_receiver.hand_smplx_forwarder` 用于处理
+`vdsuit_hand_udp_stream_example.json` 所示的 40 关节双手数据。示例命令：
+
+```powershell
+python -m mocap_receiver.hand_smplx_forwarder `
+  --listen-port 7101 `
+  --target-host 192.168.1.20 `
+  --target-port 7102
+```
+
+在 UDP 转发的同时保存为 SMPL-X 动作文件：
+
+```powershell
+python -m mocap_receiver.hand_smplx_forwarder `
+  --listen-port 7101 `
+  --target-host 192.168.1.20 `
+  --target-port 7102 `
+  --output-file .\output\hands.npz
+```
+
+也可以不转发，只保存本地文件：
+
+```powershell
+python -m mocap_receiver.hand_smplx_forwarder `
+  --listen-port 7101 `
+  --output-file .\output\hands.npz
+```
+
+`.npz` 会在按 `Ctrl-C` 正常退出时原子封装完成，包含 `(N,165)` 的
+`poses`、`(N,90)` 的 `pose_hand` 以及参考 Stage-II 文件中的其他姿态字段。
+所有姿态、位移和体型浮点数组均保存为 `float64`。
+运行期间需要逐帧立即落盘或查看正在增长的文件时，可保存为 JSONL：
+
+```powershell
+python -m mocap_receiver.hand_smplx_forwarder `
+  --listen-port 7101 `
+  --output-file .\output\hands.jsonl
+```
+
+默认不会覆盖已有文件；使用 `--overwrite-output` 明确覆盖。只有 JSONL 支持
+`--append-output`，NPZ 不支持追加写入。
+
+输入支持单个 UTF-8 JSON 对象或同一 UDP 包中的 JSONL。`skeleton` 只用于校验
+40 关节名称、父子关系和静态偏移，不会转发；每个 `frame` 会产生一个
+`smplx_hand_frame` UDP JSON 包。接收循环使用 0.2 秒超时，因此尚未收到
+`skeleton` 时按 `Ctrl-C` 也能正常退出。
+
+输出字段与 `OK_B_stageii.npz` 对齐：`poses` 为 165 维，并严格按
+`root_orient(3) + pose_body(63) + pose_jaw(3) + pose_eye(6) + pose_hand(90)`
+拼接。`pose_hand` 是左手 45 维后接右手 45 维，每只手的 15 个关节顺序为：
+
+```text
+index1/2/3, middle1/2/3, pinky1/2/3, ring1/2/3, thumb1/2/3
+```
+
+源数据中食指、中指、无名指和小指各有一个额外掌骨节点。程序使用
+`*Finger1/2/3` 映射 SMPL-X 的三节手指，并通过世界旋转求相对旋转，把被跳过
+掌骨节点的旋转效果合并到第一节。四元数按 `wxyz` 解析为世界旋转，再转换为
+SMPL-X 局部 axis-angle；坐标从 `[右, 前, 上]` 转为 `[左, 上, 前]`。
+
+手部流无法独立推断 pelvis、身体和面部，所以这些标准 SMPL-X 参数以及
+`trans` 固定填零，`betas` 使用 16 个零。为避免丢失信息，输出额外保留
+`hand_positions` 和 `hand_global_orient`，顺序均由
+`hand_side_order=["left", "right"]` 指定。帧率元数据默认 60Hz，可用
+`--mocap-framerate` 修改。安装项目后也可使用：
+
+```powershell
+vdsuit-smplx-hand-forwarder --listen-port 7101 --target-port 7102
+```
+
+## 按帧号合并身体和手部 NPZ
+
+身体和手部发送端使用同一个全局帧号时，可以只保留两份录制中共同存在的帧，
+并合成为完整 SMPL-X Stage-II 动作：
+
+```powershell
+python -m mocap_receiver.merge_body_hand `
+  .\output\body.npz `
+  .\output\hands.npz `
+  --output .\output\merged_smplx.npz `
+  --axis-up y
+```
+
+安装项目后也可使用：
+
+```powershell
+vdsuit-merge-body-hand body.npz hands.npz --output merged_smplx.npz
+```
+
+合并器读取两边的 `frame_index`，求精确交集并按帧号升序配对。例如身体为
+`[10,12,13,15]`、手部为 `[9,10,11,13,15,16]` 时，输出只包含帧
+`10、13、15` 对应的动作。不会插值、复制临近帧或根据数组行号猜测；旧身体
+NPZ 如果没有 `frame_index`，必须使用新版接收器重新录制。
+
+身体提供 `root_orient(3)`、`pose_body(63)` 和 `trans(3)`；手部提供
+`pose_hand(90)`、`pose_jaw(3)` 和 `pose_eye(6)`。完整姿态严格拼接为：
+
+```text
+poses = root_orient + pose_body + pose_jaw + pose_eye + pose_hand
+      =       3     +     63    +     3    +     6    +     90
+      = 165
+```
+
+最终 NPZ 的字段集合与 `OK_B_stageii.npz` 一致，不写入 `frame_index`、骨架消息、
+`hand_positions` 或 `hand_global_orient`。实时输入没有 Stage-II marker 拟合结果，
+因此 `markers_latent` 为 `(0,3)`、`latent_labels` 为空，
+`markers_latent_vids` 为空字典；不会复制参考动作中无关的 marker 数据。
+对应参考文件的所有浮点字段均为 `float64`；合并不插帧或重采样，输出帧率保持
+两份输入共同的原始帧率。
+默认拒绝覆盖已有输出，确需覆盖时添加 `--overwrite`。
+
+`--axis-up` 用于选择合并文件的世界坐标系，默认为 `y`：
+
+- `--axis-up y`：SMPL 原生坐标，X 向左、Y 向上、Z 向前。
+- `--axis-up z`：X 向右、Y 向前、Z 向上。
+- `--axis-up x`：X 向上、Y 向前、Z 向左。
+
+坐标转换只修改 `root_orient`、`trans` 以及 `poses[:,0:3]`，不会修改
+`pose_body`、`pose_hand`、`pose_jaw` 或 `pose_eye` 等局部旋转。例如生成 Z-up：
+
+```powershell
+python -m mocap_receiver.merge_body_hand `
+  .\output\body.npz `
+  .\output\hands.npz `
+  --output .\output\merged_smplx_z_up.npz `
+  --axis-up z `
+  --overwrite
+```
+
+## 可视化合并后的 SMPL-X 动作
+
+SMPL-X 查看器读取合并器生成的 `(N,165)` Stage-II NPZ，并使用官方
+`smplx.lbs` 对 10475 顶点模型进行蒙皮。模型目录应直接包含
+`SMPLX_NEUTRAL.npz`、`SMPLX_MALE.npz` 和 `SMPLX_FEMALE.npz`。
+
+使用项目 `.venv` 和默认模型目录播放：
+
+```powershell
+.\.venv\Scripts\python.exe -m mocap_receiver.smplx_visualize `
+  .\output\merged_smplx.npz `
+  --model-dir .\smplx_model `
+  --backend gpu `
+  --device auto `
+  --fixed-camera `
+  --window-width 1280 `
+  --window-height 720
+```
+
+GPU 窗口控制：空格暂停，左右方向键逐帧，`+/-` 调速，鼠标左键拖动旋转，
+滚轮缩放，`W` 切换线框，`R` 重置视角，`Esc` 退出。`--device auto` 会优先
+选择 CUDA；如果安装的是 CPU 版 PyTorch，蒙皮在 CPU 计算，OpenGL 网格仍由
+显卡渲染。
+
+导出 GIF（自动使用 Matplotlib）：
+
+```powershell
+.\.venv\Scripts\python.exe -m mocap_receiver.smplx_visualize `
+  .\output\merged_smplx.npz `
+  --model-dir .\smplx_model `
+  --start-frame 0 `
+  --end-frame 180 `
+  --mesh-face-step 4 `
+  --save .\output\merged_preview.gif
+```
+
+重新执行 `python -m pip install -e .` 后，也可使用命令行入口：
+
+```powershell
+vdsuit-smplx-viewer .\output\merged_smplx.npz --model-dir .\smplx_model
+```
 
 ## 测试
 

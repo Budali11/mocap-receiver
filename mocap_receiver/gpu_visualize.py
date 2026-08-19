@@ -72,6 +72,7 @@ def play_motion_gpu(
     vsync: bool = True,
     visible: bool = True,
     auto_close_after_frames: int | None = None,
+    model_label: str = "SMPL",
 ) -> dict[str, Any]:
     """Play a SMPL motion with indexed OpenGL triangles on the active GPU.
 
@@ -106,7 +107,7 @@ def play_motion_gpu(
         window = pyglet.window.Window(
             width=width,
             height=height,
-            caption="SMPL GPU Player",
+            caption=f"{model_label} GPU Player",
             resizable=True,
             vsync=vsync,
             visible=visible,
@@ -229,7 +230,8 @@ def play_motion_gpu(
         source_frame = int(frame_indices[sequence_index])
         playback_state = "PLAY" if state["playing"] else "PAUSE"
         window.set_caption(
-            f"SMPL GPU | {playback_state} | frame {source_frame}/{motion.frame_count - 1} | "
+            f"{model_label} GPU | {playback_state} | "
+            f"frame {source_frame}/{motion.frame_count - 1} | "
             f"{state['speed']:.2f}x | {state['measured_fps']:.1f} FPS | {renderer}"
         )
 

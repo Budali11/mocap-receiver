@@ -260,13 +260,23 @@ class ProtocolAndServerTests(unittest.TestCase):
             with np.load(output_path, allow_pickle=False) as motion:
                 self.assertEqual(
                     set(motion.files),
-                    {"poses", "trans", "betas", "gender", "mocap_framerate"},
+                    {
+                        "poses",
+                        "trans",
+                        "frame_index",
+                        "betas",
+                        "gender",
+                        "mocap_framerate",
+                    },
                 )
                 self.assertEqual(motion["poses"].shape, (3, 72))
                 self.assertEqual(motion["trans"].shape, (3, 3))
+                np.testing.assert_array_equal(motion["frame_index"], [123, 123, 123])
                 self.assertEqual(motion["betas"].shape, (10,))
-                self.assertEqual(motion["poses"].dtype, np.float32)
-                self.assertEqual(motion["trans"].dtype, np.float32)
+                self.assertEqual(motion["poses"].dtype, np.float64)
+                self.assertEqual(motion["trans"].dtype, np.float64)
+                self.assertEqual(motion["betas"].dtype, np.float64)
+                self.assertEqual(motion["mocap_framerate"].dtype, np.float64)
                 np.testing.assert_allclose(motion["poses"], 0.0, atol=1e-7)
                 np.testing.assert_allclose(motion["trans"][:, 1], 1.11000001, atol=1e-7)
                 self.assertEqual(str(motion["gender"]), "neutral")
@@ -353,6 +363,7 @@ class ProtocolAndServerTests(unittest.TestCase):
             with np.load(output_path, allow_pickle=False) as motion:
                 self.assertEqual(motion["poses"].shape, (1, 72))
                 self.assertEqual(motion["trans"].shape, (1, 3))
+                np.testing.assert_array_equal(motion["frame_index"], [123])
 
 
 if __name__ == "__main__":
