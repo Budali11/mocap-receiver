@@ -33,7 +33,37 @@ python -m pip install pytest
 python -m pip install -e .
 ```
 
-## 运行
+## 命令行脚本总览
+
+项目提供 7 个可直接运行的命令行脚本。既可以使用 `python -m ...`，也可以在
+执行 `python -m pip install -e .` 后使用对应的短命令。
+
+| 功能 | Python 模块 | 安装后的命令 |
+| --- | --- | --- |
+| 身体 UDP 转 SMPL、转发及录制 | `python -m mocap_receiver` | `vdsuit-smpl-receiver` |
+| 播放身体 SMPL NPZ | `python -m mocap_receiver.visualize` | `vdsuit-smpl-viewer` |
+| 实时显示身体 SMPL UDP | `python -m mocap_receiver.live_visualize` | `vdsuit-smpl-live-viewer` |
+| 转换身体 SMPL NPZ 坐标系 | `python -m mocap_receiver.coordinate_converter` | `vdsuit-coord-convert` |
+| 手部 UDP 转 SMPL-X、转发及录制 | `python -m mocap_receiver.hand_smplx_forwarder` | `vdsuit-smplx-hand-forwarder` |
+| 按帧号合并身体和手部 NPZ | `python -m mocap_receiver.merge_body_hand` | `vdsuit-merge-body-hand` |
+| 播放合并后的 SMPL-X NPZ | `python -m mocap_receiver.smplx_visualize` | `vdsuit-smplx-viewer` |
+
+所有脚本都支持 `--help`。例如：
+
+```powershell
+python -m mocap_receiver.merge_body_hand --help
+```
+
+`server.py`、`recording.py`、`converter.py`、`smpl_model.py` 和
+`gpu_visualize.py` 是上述命令使用的内部模块，不是独立命令行程序。
+
+## 脚本 1：身体 UDP 转 SMPL
+
+入口：`python -m mocap_receiver` 或 `vdsuit-smpl-receiver`。
+
+该脚本接收 VD Suit 身体 UDP JSON，将每个 `frame` 转换为经典 SMPL 参数，并可
+同时转发 UDP、保存 `.npz` 或保存逐帧 JSONL。`--target-port` 和
+`--output-file` 至少需要指定一个。
 
 假设动捕发送端把数据发往本机 UDP 7001，下游程序监听 UDP 7002：
 
@@ -99,6 +129,22 @@ vdsuit-smpl-receiver `
 
 按 `Ctrl+C` 停止。程序接受每个 UDP 包一个 JSON 对象，也接受像 `vdsuit_udp_stream_example.json` 一样的 JSONL（每行一个对象）。
 
+### 身体接收脚本参数
+
+| 参数 | 必需 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `--listen-host` | 否 | `0.0.0.0` | 本机绑定地址。 |
+| `--listen-port` | 是 | 无 | 接收原始 VD Suit 身体数据的 UDP 端口。 |
+| `--target-host` | 否 | `127.0.0.1` | 转换后 SMPL UDP 的目标地址。 |
+| `--target-port` | 条件必需 | 无 | 转换后 SMPL UDP 的目标端口；不转发时省略。 |
+| `--output-file` | 条件必需 | 无 | 保存为 `.npz` 或 `.jsonl`；不保存时省略。 |
+| `--output-format` | 否 | `auto` | `auto`、`smpl-npz` 或 `jsonl`。 |
+| `--mocap-framerate` | 否 | `60` | 写入 NPZ 的帧率元数据，不会插帧。 |
+| `--append-output` | 否 | 关闭 | 追加 JSONL；不能用于 NPZ。 |
+| `--overwrite-output` | 否 | 关闭 | 覆盖已有输出文件，与 `--append-output` 互斥。 |
+| `--receive-size` | 否 | `65535` | 单个 UDP 数据报最大读取字节数。 |
+| `--log-level` | 否 | `INFO` | `DEBUG`、`INFO`、`WARNING` 或 `ERROR`。 |
+
 ## SMPL 动作文件格式
 
 `.npz` 使用常见的 AMASS 风格字段，可通过 `numpy.load()` 直接读取：
@@ -123,7 +169,12 @@ betas = motion["betas"]       # (10,)
 fps = motion["mocap_framerate"]
 ```
 
-## 可视化 SMPL 动作
+## 脚本 2：播放身体 SMPL NPZ
+
+入口：`python -m mocap_receiver.visualize` 或 `vdsuit-smpl-viewer`。
+
+输入必须是经典 SMPL 动作文件，其中 `poses` 为 `(N,72)`；该脚本不能播放
+`(N,165)` 的 SMPL-X 合并文件，后者请使用脚本 7。
 
 交互播放默认使用 Pyglet/OpenGL GPU 后端。CPU 只负责快速 SMPL LBS，完整的 13776 个三角面通过索引缓冲上传并由显卡完成深度测试和着色：
 
@@ -200,7 +251,33 @@ python -m mocap_receiver.visualize .\motion.npz `
 
 项目只读取本机已有模型，不会复制或重新分发受 SMPL 许可约束的模型文件。旧版 pickle 通过项目内的纯 NumPy 加载器读取，不需要安装 SciPy、Chumpy、OpenCV、PyTorch 或 smplx。GPU 窗口使用轻量的 Pyglet 2.1/OpenGL 3.3。
 
-## 实时动捕动画
+### 身体 NPZ 播放脚本参数
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `motion_file` | 无 | 必需位置参数，经典 SMPL `.npz` 文件。 |
+| `--start-frame` | `0` | 第一帧索引，包含该帧。 |
+| `--end-frame` | 文件末尾 | 结束帧索引，不包含该帧。 |
+| `--stride` | `1` | 每隔多少帧显示一帧。 |
+| `--speed` | `1.0` | 播放速度倍率。 |
+| `--view-radius` | `1.2` | 跟随摄像机半径，单位为米。 |
+| `--fixed-camera` | 关闭 | 使用覆盖完整根轨迹的固定摄像机。 |
+| `--no-loop` | 关闭 | 播放到末尾后停止，不循环。 |
+| `--save` | 无 | 导出 `.gif` 或 `.mp4`，不打开交互窗口。 |
+| `--dpi` | `120` | 导出动画的 DPI。 |
+| `--model-dir` | 内置默认路径 | SMPL v1.1 三个人体模型所在目录。 |
+| `--gender` | `auto` | `auto`、`neutral`、`male` 或 `female`。 |
+| `--skeleton` | 关闭 | 不加载网格，改用 Matplotlib 骨架预览。 |
+| `--mesh-face-step` | `1` | Matplotlib 每隔多少个三角面绘制一个。 |
+| `--backend` | `gpu` | 交互后端：`gpu` 或 `matplotlib`。 |
+| `--window-width` | `1000` | GPU 窗口宽度。 |
+| `--window-height` | `800` | GPU 窗口高度。 |
+| `--no-vsync` | 关闭 | 禁用 GPU 窗口垂直同步。 |
+
+## 脚本 3：实时显示身体 SMPL UDP
+
+入口：`python -m mocap_receiver.live_visualize` 或
+`vdsuit-smpl-live-viewer`。
 
 实时查看器作为独立程序运行，监听转换器发出的 SMPL UDP JSON。建议先启动查看器：
 
@@ -238,16 +315,101 @@ vdsuit-smpl-live-viewer --listen-port 7002
 
 实时查看器只保留最新帧，不会因为渲染暂时变慢而积压旧帧。窗口标题会显示当前帧号、接收延迟、源帧缺口、被新帧覆盖的渲染帧数和无效包数量；超过 `--stale-timeout` 未收到数据时会显示 `SIGNAL LOST`。
 
-实时模式默认使用 SMPL 模型计算全部 6890 顶点，并显示每两个顶点中的一个，以降低 Matplotlib 的刷新开销。可用 `--mesh-vertex-step 1` 显示所有顶点。若需要三角表面，可以使用：
+实时模式默认使用 GPU/OpenGL 绘制完整 SMPL 三角网格。显式选择
+`--backend matplotlib` 时，默认使用更快的顶点模式，并显示每两个顶点中的一个；
+可用 `--mesh-vertex-step 1` 显示全部顶点。Matplotlib 后端如需三角表面，可以使用：
 
 ```powershell
 python -m mocap_receiver.live_visualize `
   --listen-port 7002 `
+  --backend matplotlib `
   --surface `
   --mesh-face-step 1
 ```
 
-Matplotlib 的完整三角表面刷新速度明显低于顶点模式，因此实时显示默认采用顶点模式。`--skeleton` 是速度最快的回退模式。其他常用选项包括 `--fixed-camera`、`--view-radius`、`--render-fps`、`--stale-timeout` 和 `--log-level`。
+Matplotlib 的完整三角表面刷新速度明显低于顶点模式。`--skeleton` 是速度最快的
+回退模式，并会自动使用 Matplotlib。其他常用选项包括 `--fixed-camera`、
+`--view-radius`、`--render-fps`、`--stale-timeout` 和 `--log-level`。
+
+实时查看器还会把收到的原始 UDP 数据报保存到
+`<output-dir>/<启动时间>/datagram_*.jsonl`，便于复现网络输入。
+
+### 实时身体查看脚本参数
+
+| 参数 | 必需 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `--listen-host` | 否 | `0.0.0.0` | 监听转换后 SMPL UDP 的本机地址。 |
+| `--listen-port` | 是 | 无 | 转换后 SMPL UDP 端口，应与身体接收器的 `--target-port` 一致。 |
+| `--render-fps` | 否 | `60` | Matplotlib 窗口目标刷新率。 |
+| `--view-radius` | 否 | `1.2` | 摄像机半径，单位为米。 |
+| `--fixed-camera` | 否 | 关闭 | 摄像机锁定在第一帧 pelvis 附近。 |
+| `--stale-timeout` | 否 | `0.5` | 超过该秒数无新帧时显示信号丢失。 |
+| `--receive-size` | 否 | `65535` | 单个 UDP 数据报最大读取字节数。 |
+| `--log-level` | 否 | `INFO` | 日志级别。 |
+| `--model-dir` | 否 | SMPL 默认目录 | SMPL v1.1 模型目录。 |
+| `--gender` | 否 | `neutral` | `neutral`、`male` 或 `female`。 |
+| `--backend` | 否 | `gpu` | `gpu` 或 `matplotlib`。 |
+| `--window-width` | 否 | `1000` | GPU 窗口宽度。 |
+| `--window-height` | 否 | `800` | GPU 窗口高度。 |
+| `--no-vsync` | 否 | 关闭 | 禁用 GPU 垂直同步。 |
+| `--output-dir` | 否 | `output` | 原始 UDP 数据报保存目录。 |
+| `--skeleton` | 否 | 关闭 | 使用轻量骨架；与 `--surface` 互斥。 |
+| `--surface` | 否 | 关闭 | Matplotlib 绘制三角表面；默认是顶点模式。 |
+| `--mesh-vertex-step` | 否 | `2` | Matplotlib 顶点模式的顶点采样步长。 |
+| `--mesh-face-step` | 否 | `1` | Matplotlib 表面模式的三角面采样步长。 |
+
+## 脚本 4：转换身体 SMPL NPZ 坐标系
+
+入口：`python -m mocap_receiver.coordinate_converter` 或
+`vdsuit-coord-convert`。
+
+该脚本读取经典 SMPL `(N,72)` NPZ，把全局根旋转和 `trans` 转为指定坐标系；
+所有身体局部旋转、体型、性别、帧数和帧率保持不变。默认同时生成 Y-up、Z-up
+和 X-up 三份结果：
+
+```powershell
+python -m mocap_receiver.coordinate_converter `
+  .\output\body.npz `
+  --output-dir .\output\coordinate_variants
+```
+
+只生成 Z-up：
+
+```powershell
+python -m mocap_receiver.coordinate_converter `
+  .\output\body.npz `
+  --systems z_up `
+  --output-dir .\output\coordinate_variants
+```
+
+输出目录结构为：
+
+```text
+coordinate_variants/
+└── YYYYMMDD_HHMMSS/
+    ├── y_up/body.npz
+    ├── z_up/body.npz
+    └── x_up/body.npz
+```
+
+坐标约定：
+
+- `y_up`：X 左、Y 上、Z 前，即原生 SMPL 坐标。
+- `z_up`：X 右、Y 前、Z 上。
+- `x_up`：X 上、Y 前、Z 左。
+
+该独立转换脚本输出经典 SMPL 字段，不保留用于身体/手部合并的
+`frame_index`。如果还需要合并手部，请先合并，再通过 merge 脚本的
+`--axis-up` 直接选择最终坐标系。
+
+### 坐标转换脚本参数
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `motion_file` | 无 | 必需位置参数，经典 SMPL `.npz`。 |
+| `--output-dir` | `output` | 时间戳输出目录的父目录。 |
+| `--systems` | `y_up z_up x_up` | 要生成的一种或多种坐标系。 |
+| `--log-level` | `INFO` | 日志级别。 |
 
 ## UDP 和 JSONL 帧格式
 
@@ -281,10 +443,15 @@ Matplotlib 的完整三角表面刷新速度明显低于顶点模式，因此实
 
 源骨架的四段 Spine 会根据静态骨长，在脊柱总长度的 1/3、2/3 和末端处对全局四元数做 SLERP，从而得到 SMPL 的三段 Spine，并保留上躯干最终朝向。
 
-## 手部数据转 SMPL-X 并通过 UDP 转发
+## 脚本 5：手部 UDP 转 SMPL-X
+
+入口：`python -m mocap_receiver.hand_smplx_forwarder` 或
+`vdsuit-smplx-hand-forwarder`。
 
 `mocap_receiver.hand_smplx_forwarder` 用于处理
-`vdsuit_hand_udp_stream_example.json` 所示的 40 关节双手数据。示例命令：
+`vdsuit_hand_udp_stream_example.json` 所示的 40 关节双手数据，将其转换成
+Stage-II 风格 SMPL-X 手部参数。`--target-port` 和 `--output-file` 至少指定一个。
+示例命令：
 
 ```powershell
 python -m mocap_receiver.hand_smplx_forwarder `
@@ -353,7 +520,26 @@ SMPL-X 局部 axis-angle；坐标从 `[右, 前, 上]` 转为 `[左, 上, 前]`�
 vdsuit-smplx-hand-forwarder --listen-port 7101 --target-port 7102
 ```
 
-## 按帧号合并身体和手部 NPZ
+### 手部接收脚本参数
+
+| 参数 | 必需 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `--listen-host` | 否 | `0.0.0.0` | 本机 UDP 绑定地址。 |
+| `--listen-port` | 是 | 无 | 接收原始 40 关节手部数据的端口。 |
+| `--target-host` | 否 | `127.0.0.1` | 转换后 SMPL-X UDP 目标地址。 |
+| `--target-port` | 条件必需 | 无 | 转换后帧的目标端口；不转发时省略。 |
+| `--output-file` | 条件必需 | 无 | 保存为 `.npz` 或 `.jsonl`；不保存时省略。 |
+| `--output-format` | 否 | `auto` | `auto`、`smplx-npz` 或 `jsonl`。 |
+| `--append-output` | 否 | 关闭 | 追加已有 JSONL；不能用于 NPZ。 |
+| `--overwrite-output` | 否 | 关闭 | 覆盖已有输出，与 `--append-output` 互斥。 |
+| `--mocap-framerate` | 否 | `60` | 写入 NPZ 的帧率元数据，不会插帧。 |
+| `--receive-size` | 否 | `65535` | 单个 UDP 输入数据报最大字节数。 |
+| `--log-level` | 否 | `INFO` | 日志级别。 |
+
+## 脚本 6：按帧号合并身体和手部 NPZ
+
+入口：`python -m mocap_receiver.merge_body_hand` 或
+`vdsuit-merge-body-hand`。
 
 身体和手部发送端使用同一个全局帧号时，可以只保留两份录制中共同存在的帧，
 并合成为完整 SMPL-X Stage-II 动作：
@@ -412,11 +598,32 @@ python -m mocap_receiver.merge_body_hand `
   --overwrite
 ```
 
-## 可视化合并后的 SMPL-X 动作
+### 身体/手部合并脚本参数
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `body_file` | 无 | 必需位置参数，带 `frame_index` 的身体 SMPL NPZ。 |
+| `hand_file` | 无 | 必需位置参数，带 `frame_index` 的手部 SMPL-X NPZ。 |
+| `--output` | 无 | 必需，目标 `.npz`；其父目录必须已经存在。 |
+| `--overwrite` | 关闭 | 覆盖已有目标文件。 |
+| `--axis-up` | `y` | 输出上轴：`x`、`y` 或 `z`。 |
+| `--log-level` | `INFO` | 日志级别。 |
+
+## 脚本 7：播放合并后的 SMPL-X NPZ
+
+入口：`python -m mocap_receiver.smplx_visualize` 或
+`vdsuit-smplx-viewer`。
 
 SMPL-X 查看器读取合并器生成的 `(N,165)` Stage-II NPZ，并使用官方
 `smplx.lbs` 对 10475 顶点模型进行蒙皮。模型目录应直接包含
 `SMPLX_NEUTRAL.npz`、`SMPLX_MALE.npz` 和 `SMPLX_FEMALE.npz`。
+
+需要在运行该脚本的环境中安装 PyTorch、官方 `smplx` 包以及可视化依赖：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install "smplx[all]"
+.\.venv\Scripts\python.exe -m pip install -e ".[visualization]"
+```
 
 使用项目 `.venv` 和默认模型目录播放：
 
@@ -453,6 +660,32 @@ GPU 窗口控制：空格暂停，左右方向键逐帧，`+/-` 调速，鼠标�
 ```powershell
 vdsuit-smplx-viewer .\output\merged_smplx.npz --model-dir .\smplx_model
 ```
+
+SMPL-X 查看器的摄像机以 Y 为上轴。希望人物正常竖直显示时，合并阶段应使用
+`--axis-up y`；X-up/Z-up 输出主要供对应坐标约定的下游程序使用。
+
+### SMPL-X 播放脚本参数
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `motion_file` | 无 | 必需位置参数，合并后的 `(N,165)` SMPL-X NPZ。 |
+| `--model-dir` | 项目 `smplx_model` | 直接包含三份 `SMPLX_*.npz` 的目录。 |
+| `--gender` | `auto` | `auto`、`neutral`、`male` 或 `female`。 |
+| `--device` | `auto` | LBS 计算设备：`auto`、`cpu` 或 `cuda`。 |
+| `--backend` | `gpu` | 交互渲染后端：`gpu` 或 `matplotlib`。 |
+| `--start-frame` | `0` | 第一帧索引，包含该帧。 |
+| `--end-frame` | 文件末尾 | 结束帧索引，不包含该帧。 |
+| `--stride` | `1` | 每隔多少帧显示一帧。 |
+| `--speed` | `1.0` | 播放速度倍率。 |
+| `--view-radius` | `1.2` | 摄像机半径，单位为米。 |
+| `--fixed-camera` | 关闭 | 显示完整根运动轨迹。 |
+| `--no-loop` | 关闭 | 到达最后一帧后停止。 |
+| `--save` | 无 | 导出 `.gif` 或 `.mp4`，自动使用 Matplotlib。 |
+| `--dpi` | `120` | 导出动画 DPI。 |
+| `--mesh-face-step` | `4` | Matplotlib 每隔多少个三角面绘制一个。 |
+| `--window-width` | `1000` | GPU 窗口宽度。 |
+| `--window-height` | `800` | GPU 窗口高度。 |
+| `--no-vsync` | 关闭 | 禁用 GPU 垂直同步。 |
 
 ## 测试
 
